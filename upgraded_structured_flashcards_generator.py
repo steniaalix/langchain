@@ -47,6 +47,8 @@ Generate the flashcard set.
 )
 ])
 
+
+
 chain=prompt|structured_llm
 
 topic=input("Enter the topic:").strip()
@@ -69,3 +71,5 @@ for index, card in enumerate(response.flashcards,start=1):
 
 print(f"\nQuiz:")
 print(f"{response.quiz_question}")
+
+
