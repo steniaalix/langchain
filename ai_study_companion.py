@@ -13,7 +13,7 @@ from typing import List
 load_dotenv()
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="openai/gpt-oss-120b",
     temperature=0.9
 )
 
@@ -94,6 +94,32 @@ Generate the flashcard set.
 
 flashcard_chain = flashcard_prompt | structured_llm
 
+#----------------------------------
+#Batch Flashcards
+#---------------------------------
+
+batch_flashcards_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI teacher who prepares flashcards for all the toipcs given.
+
+Rules:
+- Create exactly three flashcards for each topic.
+- Give a short explanation on the topic before flashcards.
+- Be clear and simple.
+- Match the student's level.
+"""
+    ),
+    (
+        "human",
+        """
+Topic:{topic}
+Level:{level}"""
+    )
+])
+
+batch_flashcards_chain=batch_flashcards_prompt|structured_llm
 
 # -----------------------------
 # Default Chain
@@ -133,6 +159,8 @@ def is_flashcard(input_data):
     return input_data["command"] == "flashcards"
 
 
+
+
 branch_chain = RunnableBranch(
     (is_exp, exp_chain),
     (is_flashcard, flashcard_chain),
@@ -161,18 +189,40 @@ def print_flashcards(response):
     print("\nQuiz Question:")
     print(response.quiz_question)
 
+#-------------------------------------------------
+#Helper function to print batch of flashcards
+#-------------------------------------------------
 
+def print_batch_flashcards(responses):
+    for response in responses:
+        print_flashcards(response)
 # -----------------------------
 # Main App
 # -----------------------------
 
 while True:
-    command = input("\nEnter command explain/flashcards/exit: ").strip().lower()
+    command = input("\nEnter command explain/flashcards/Batch Flashcards/exit: ").strip().lower()
 
     if command == "exit":
         print("Bye!")
         break
+    if command=="batch flashcards":
+        topic_text=input("Enter the topics seperated by commas:").strip()
+        topics=topic_text.split(",")
+        level=input("Enter level:").strip().lower()
 
+        input_batch=[]
+
+        for topic in topics:
+            input_batch.append({
+                "topic":topic,
+                "level":level
+            })
+        
+        responses=batch_flashcards_chain.batch(input_batch)
+
+        print_batch_flashcards(responses)
+        continue
     topic = input("Enter the topic: ").strip()
     level = input("Enter the level: ").strip()
 
