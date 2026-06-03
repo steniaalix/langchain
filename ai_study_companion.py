@@ -6,16 +6,23 @@ from langchain_core.runnables import RunnablePassthrough,RunnableBranch,Runnable
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage,AIMessage
 from pydantic import BaseModel , Field
 from typing import List
+
 
 
 load_dotenv()
 
 llm = ChatGroq(
     model="openai/gpt-oss-120b",
-    temperature=0.9
+    temperature=0.7
 )
+structure_based_llm=ChatGroq(
+    model="openai/gpt-oss-120b",
+    temperature=0.1
+)
+
 
 parser = StrOutputParser()
 
@@ -66,7 +73,7 @@ class FlashcardSet(BaseModel):
     quiz_question: str = Field(description="A quiz question to test understanding")
 
 
-structured_llm = llm.with_structured_output(FlashcardSet)
+structured_llm = structure_based_llm.with_structured_output(FlashcardSet)
 
 flashcard_prompt = ChatPromptTemplate.from_messages([
     (
@@ -120,6 +127,191 @@ Level:{level}"""
 ])
 
 batch_flashcards_chain=batch_flashcards_prompt|structured_llm
+#------------------------------
+#Quiz Topic
+#------------------------------
+
+quiz_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI tutor who creates quizes in the given topic according to the student level.
+Rules:
+-Make exactly three quizes
+-Be clear and simple
+-Give a short explanation before giving the quiz"""
+    ),(
+        "human",
+        """
+Topic:{topic}
+Level:{level}"""
+    )
+])
+
+quiz_chain=quiz_prompt|llm|parser
+
+#------------------------------
+#Project Chain
+#------------------------------
+
+project_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI assistant who gives projectt ideas based on the topic and level.
+Rules:
+-Be clear and simple
+-Give exactly three project ideas
+-Give it based on the user's level
+-Give a short explanation of the project"""
+    ),(
+        "human",
+        """
+Topic: {topic}
+Level: {level}"""
+    )
+])
+
+project_chain=project_prompt|llm|parser
+
+#-----------------------------------
+#Analyzer
+#------------------------------------
+
+analogy_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI assistant who gives real-life analogy based on the topic.
+Rules:
+-Give real-life analogy
+-Give it according to the user's level
+-Be clear and simple"""
+    ),(
+        "human",
+        """
+Topic: {topic}
+Level: {level}"""
+    )
+])
+
+analogy_chain=analogy_prompt|llm|parser
+
+
+mistake_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI assistant who gives a common mistake for a topic.
+Rules:
+-Give a common mistake based on topic 
+-Give it based on the user's level
+-Be clear and simple"""
+    ),(
+        "human",
+        """
+Topic: {topic}
+Level: {level}"""
+    )
+])
+
+mistake_chain=mistake_prompt|llm|parser
+
+analyze_chain=RunnableParallel({
+    "explanation":exp_chain,
+    "analogy":analogy_chain,
+    "mistake":mistake_chain,
+    "project":project_chain,
+    "quiz":quiz_chain
+})
+#-------------------------------
+#Study pack chain .assign()
+#-------------------------------
+
+study_plan_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI study assistant. You have to create a study plan based on all given information
+
+Rules:
+-Be clear and simple
+-Create it according to the user's level
+-Create it based on the all give infomations
+-Be friendly"""
+    ),(
+        "human",
+        """
+Topic: {topic}
+Level: {level}
+Explanation: {explanation}
+Analogy: {analogy}
+Common Mistake:{mistake}
+Quiz: {quiz}
+Project Ideas: {project}"""
+    )
+])
+
+study_plan_chain=study_plan_prompt|llm|parser
+
+study_pack_chain=(
+    RunnablePassthrough.assign(
+        explanation=exp_chain
+    )
+    |RunnablePassthrough.assign(
+        analogy=analogy_chain
+    )
+    |RunnablePassthrough.assign(
+        mistake=mistake_chain
+    )
+    |RunnablePassthrough.assign(
+        quiz=quiz_chain
+    )
+    |RunnablePassthrough.assign(
+        project=project_chain
+    )
+    |RunnablePassthrough.assign(
+        study_plan=study_plan_chain
+    )
+)
+#-----------------------
+#Chat using memory
+#-----------------------
+
+chat_prompt=ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+You are an expert AI study companion who remembers the conversation.
+
+Rules:
+- Remember the conversation.
+- Answer follow-up questions using chat history.
+- Help the student learn clearly.
+- If the student asks what they said earlier, use the history.
+"""
+    ),
+    MessagesPlaceholder(variable_name="history"),
+    (
+        "human",
+        "{input}")
+])
+
+chat_chain=chat_prompt|llm
+
+chat_store={}
+
+def get_session_history(session_id: str):
+    if session_id not in chat_store:
+        chat_store[session_id]=InMemoryChatMessageHistory()
+    return chat_store[session_id]
+
+memory_chatbot=RunnableWithMessageHistory(
+    chat_chain,
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="history"
+)
 
 # -----------------------------
 # Default Chain
@@ -140,6 +332,15 @@ User command: {command}
 Tell the user to use:
 - explain
 - flashcards
+- batch flashcards
+- quiz
+- project
+- history
+- analyze
+- study pack
+- chat
+- chat history
+- exit
 """
     )
 ])
@@ -158,12 +359,28 @@ def is_exp(input_data):
 def is_flashcard(input_data):
     return input_data["command"] == "flashcards"
 
+def is_quiz(input_data):
+    return input_data["command"]== "quiz"
+
+def is_project(input_data):
+    return input_data["command"]== "project"
+
+def is_analyze(input_data):
+    return input_data["command"]== "analyze"
+
+def is_study_pack(input_data):
+    return input_data["command"]== "study pack"
+
 
 
 
 branch_chain = RunnableBranch(
     (is_exp, exp_chain),
     (is_flashcard, flashcard_chain),
+    (is_quiz,quiz_chain),
+    (is_project,project_chain),
+    (is_analyze,analyze_chain),
+    (is_study_pack,study_pack_chain),
     default_chain
 )
 
@@ -193,19 +410,142 @@ def print_flashcards(response):
 #Helper function to print batch of flashcards
 #-------------------------------------------------
 
-def print_batch_flashcards(responses):
-    for response in responses:
+def print_batch_flashcards(topics,responses):
+    for topic,response in zip(topics,responses):
+    
+        if isinstance(response,Exception):
+            print("Failed to generate flashcards for this topic.")
+            print(response)
+            continue
+
         print_flashcards(response)
+        print("\n"+"-"*70)
+#-----------------------------------
+#Helper function to print analyze
+#-----------------------------------
+
+def print_analyzer(response):
+    print("\n" + "=" * 70)
+    print("AI TOPIC ANALYZER")
+    print("=" * 70)
+
+    print("\nExplanation:")
+    print(response["explanation"])
+
+    print("\nAnalogy:")
+    print(response["analogy"])
+
+    print("\nCommon Mistake:")
+    print(response["mistake"])
+
+    print("\nProject Ideas:")
+    print(response["project"])
+
+    print("\nQuiz:")
+    print(response["quiz"])
+#--------------------------------------
+#Helper funciton to print study pack
+#--------------------------------------
+
+def print_study_pack(response):
+    print("\n" + "=" * 70)
+    print("AI STUDY PACK")
+    print("=" * 70)
+
+    print("\nTopic:")
+    print(response["topic"])
+
+    print("\nLevel:")
+    print(response["level"])
+
+    print("\nExplanation:")
+    print(response["explanation"])
+
+    print("\nAnalogy:")
+    print(response["analogy"])
+
+    print("\nCommon Mistake:")
+    print(response["mistake"])
+
+    print("\nQuiz:")
+    print(response["quiz"])
+
+    print("\nProject Ideas:")
+    print(response["project"])
+
+    print("\nStudy Plan:")
+    print(response["study_plan"])
+#------------------------------------------------
+#Helper to convert any type of response to text
+#------------------------------------------------
+
+def convert_to_text(command,response):
+    if isinstance(response,FlashcardSet):
+        text=f"\n\nTopic: {response.topic}\n\n"
+        text+=f"Explanation: {response.explanation}\n\n"
+        text+=f"Flashcards:\n"
+
+        for index,card in enumerate(response.flashcards,start=1):
+            text+= f"{index}. Q: {card.question}\n"
+            text+= f"  A: {card.answer}\n"
+
+        text+= f"\nQuiz Question: {response.quiz_question}"
+        return text
+    
+    if isinstance(response,dict):
+        text=""
+
+        for key,value in response.items():
+            text+= f"\n{key.upper()}:\n{value}\n"
+
+        return text
+    
+    return str(response)
+
+#----------------------------------------------------------
+#Converting batch flashcard response into text format
+#----------------------------------------------------------
+
+def batch_response_to_text(topics,responses):
+
+    text="Batch Flashcards Result\n\n"
+
+    for topic,response in zip(topics,responses):
+        text+= "="*50+"\n"
+        text+= f"Topic: {topic.strip()}\n"
+        text+= "="*50+"\n"
+    
+        if isinstance(response,Exception):
+            text+= f"Failed to generate flashcards: {response}\n\n"
+            continue
+
+        text+= f"Explanation: {response.explanation}\n\n"
+        text+= "flashcards:\n"
+
+        for index,card in enumerate(response.flashcards,start=1):
+            text+= f"{index}. Q: {card.question}\n"
+            text+= f"   A:{card.answer}\n"
+    
+        text+= f"\nQuiz Question: {response.quiz_question}\n\n"
+    
+    return text
+
 # -----------------------------
 # Main App
 # -----------------------------
 
+history=[]
 while True:
-    command = input("\nEnter command explain/flashcards/Batch Flashcards/exit: ").strip().lower()
-
+    command = input("\nEnter command explain/flashcards/Batch Flashcards/Quiz/Project/History/Analyze/Study Pack/Chat/Chat History/exit: ").strip().lower()
     if command == "exit":
         print("Bye!")
         break
+    
+    
+    if command not in ["exit","history"]:
+        session_id=input("Enter session ID:").strip().lower()
+    
+    
     if command=="batch flashcards":
         topic_text=input("Enter the topics seperated by commas:").strip()
         topics=topic_text.split(",")
@@ -215,13 +555,77 @@ while True:
 
         for topic in topics:
             input_batch.append({
-                "topic":topic,
+                "topic":topic.strip(),
                 "level":level
             })
-        
-        responses=batch_flashcards_chain.batch(input_batch)
 
-        print_batch_flashcards(responses)
+        
+        responses=batch_flashcards_chain.batch(input_batch,return_exceptions=True)
+
+        print_batch_flashcards(topics,responses)
+        history.append({
+            "command":command,
+            "topic":topic_text,
+            "level":level
+        })
+        
+        batch_text=batch_response_to_text(topics,responses)
+
+        chat_history=get_session_history(session_id)
+        chat_history.add_message(
+            HumanMessage(
+                content=f"\n Command: {command}\n Topics: {topic_text}\n Level: {level}"
+            )
+        )
+
+        chat_history.add_message(
+            AIMessage(
+                content=batch_text
+            )
+        )
+        continue
+
+
+
+    if command=="chat":
+        config={
+                "configurable":{"session_id":session_id}
+            }
+        while True:
+            
+            user_input=input(f"\nYou:")
+            if user_input.strip().lower() in ["exit","quit"]:
+                print("Leaving chat mode.....")
+                break
+            response=memory_chatbot.invoke({
+                "input":user_input
+            },config=config
+            )
+
+            print("\nAI:")
+            print(response.content)
+        continue
+
+    if command=="chat history":
+        chat_history=get_session_history(session_id)
+        if not chat_history.messages:
+            print("\nNo chat history yet...")
+        else:
+            print("\nChat Memory:")
+            for message in chat_history.messages:
+                print(type(message).__name__,":",message.content)
+        continue
+
+
+    if command=="history":
+        if not history:
+            print("\nNo history yet!!")
+        else:
+            for index,item in enumerate(history,start=1):
+                print(f"{index}:-")
+                print(f"Command: {item['command']}")
+                print(f"Topic: {item['topic']}")
+                print(f"Level: {item['level']}")
         continue
     topic = input("Enter the topic: ").strip()
     level = input("Enter the level: ").strip()
@@ -231,13 +635,36 @@ while True:
         "topic": topic,
         "level": level
     }
-
+    history.append(input_data)
     response = branch_chain.invoke(input_data)
 
     if isinstance(response, FlashcardSet):
         print_flashcards(response)
+    
+    elif command=="analyze":
+        print_analyzer(response)
+    
+    elif command=="study pack":
+        print_study_pack(response)
     else:
         print("\nAI:")
         print(response)
+
+    response_text=convert_to_text(command,response)
+
+    chat_history=get_session_history(session_id)
+
+    chat_history.add_message(
+        HumanMessage(
+            content=f"Command: {command}\n Topic: {topic}\nLevel: {level}"
+        )
+    )
+
+    chat_history.add_message(
+        AIMessage(
+            content=response_text
+        )
+    )
+
 
     print("\n" + "-" * 60)
