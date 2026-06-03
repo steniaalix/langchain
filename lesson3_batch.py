@@ -53,8 +53,10 @@ inputs = [
     }
 ]
 
-response=chain.batch(inputs)
-for index,response in enumerate(response,start=1):
+responses=chain.batch(inputs)
+
+
+for index,response in enumerate(responses,start=1):
     print(f"\nResponse {index}")
     print("-"*50)
     print(response)

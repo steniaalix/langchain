@@ -68,8 +68,10 @@ while True:
     print(response.content)
 
     history = get_session_history(session_id)
-
+    print(history)
+'''
     print("\n--- DEBUG MEMORY ---")
     for message in history.messages:
         print(type(message).__name__, ":", message.content)
     print("--------------------")
+'''

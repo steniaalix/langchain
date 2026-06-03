@@ -31,6 +31,8 @@ parallel_chain=RunnableParallel({
 response=parallel_chain.invoke({
     "topic":"Python functions"
 })
+print(response)
+
 
 print("\nSummary:")
 print(response["summary"])

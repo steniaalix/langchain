@@ -10,7 +10,8 @@ from langchain_core.messages import HumanMessage,AIMessage
 from pydantic import BaseModel , Field
 from typing import List
 
-
+import json
+import os
 
 load_dotenv()
 
@@ -300,11 +301,67 @@ Rules:
 chat_chain=chat_prompt|llm
 
 chat_store={}
+BASE_DIR=os.path.dirname(os.path.abspath(__file__))
+MEMORY_FILE=os.path.join(BASE_DIR,"chat_memory.json")
 
 def get_session_history(session_id: str):
     if session_id not in chat_store:
         chat_store[session_id]=InMemoryChatMessageHistory()
     return chat_store[session_id]
+
+def message_to_dict(message):
+    return{
+        "type": message.type,
+        "content":message.content
+    }
+
+def dict_to_message(data):
+    if not isinstance(data,dict):
+        return None
+    
+    message_type=data.get("type")
+    content=data.get("content","")
+    if message_type=="human":
+        return HumanMessage(content=content)
+    elif message_type=="ai":
+        return AIMessage(content=content)
+    
+    return None
+
+def save_chat_store():
+    data={}
+
+    for session_id , chat_history in chat_store.items():
+        data[session_id]=[]
+
+        for message in chat_history.messages:
+            data[session_id].append(message_to_dict(message))
+
+    with open(MEMORY_FILE,"w",encoding="utf-8") as f:
+        json.dump(data,f,indent=4)
+
+def load_chat_store():
+    if not os.path.exists(MEMORY_FILE):
+        return
+    
+    with open(MEMORY_FILE,"r",encoding="utf-8") as f:
+        data=json.load(f)
+    if not isinstance(data,dict):
+        print("Invalid memory file format. Starting with empty memory.")
+        return
+        
+
+    for session_id,messages in data.items():
+        chat_store[session_id]=InMemoryChatMessageHistory()
+
+        if not isinstance(messages,list):
+            continue
+
+        for message_data in messages:
+            message=dict_to_message(message_data)
+
+            if message is not None:
+                chat_store[session_id].add_message(message)
 
 memory_chatbot=RunnableWithMessageHistory(
     chat_chain,
@@ -340,6 +397,7 @@ Tell the user to use:
 - study pack
 - chat
 - chat history
+- clear memory
 - exit
 """
     )
@@ -535,16 +593,28 @@ def batch_response_to_text(topics,responses):
 # -----------------------------
 
 history=[]
+load_chat_store()
 while True:
-    command = input("\nEnter command explain/flashcards/Batch Flashcards/Quiz/Project/History/Analyze/Study Pack/Chat/Chat History/exit: ").strip().lower()
+    command = input("\nEnter command explain/flashcards/Batch Flashcards/Quiz/Project/History/Analyze/Study Pack/Chat/Chat History/Clear Memory/exit: ").strip().lower()
     if command == "exit":
+        save_chat_store()
         print("Bye!")
         break
     
     
     if command not in ["exit","history"]:
         session_id=input("Enter session ID:").strip().lower()
-    
+
+
+    if command == "clear memory":
+        if session_id in chat_store:
+            del chat_store[session_id]
+            save_chat_store()
+            print(f"Memory cleared for session: {session_id}")
+        else:
+            print(f"No memory was found for session: {session_id}")
+        
+        continue
     
     if command=="batch flashcards":
         topic_text=input("Enter the topics seperated by commas:").strip()
@@ -583,6 +653,7 @@ while True:
                 content=batch_text
             )
         )
+        save_chat_store()
         continue
 
 
@@ -604,6 +675,7 @@ while True:
 
             print("\nAI:")
             print(response.content)
+            save_chat_store()
         continue
 
     if command=="chat history":
@@ -665,6 +737,7 @@ while True:
             content=response_text
         )
     )
+    save_chat_store()
 
 
     print("\n" + "-" * 60)
