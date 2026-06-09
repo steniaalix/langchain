@@ -1,0 +1,5 @@
+Python variables are used to store values.
+
+A list is a collection that can store multiple items.
+
+A tuple is like a list, but it cannot be changed after creation.
