@@ -129,6 +129,40 @@ def print_sources(retrieved_docs):
     for index, source in enumerate(unique_sources, start=1):
         print(f"{index}. {source}")
 
+#--------------------------------------
+#Helper to print the chunks retrieved 
+#--------------------------------------
+
+def print_retrieved_docs(retrieved_docs):
+    print("\nRetrieved chunks:")
+
+    for index , doc in enumerate(retrieved_docs,start=1):
+        source_path=doc.metadata.get("source","unknown source")
+        source_name=Path(source_path).name
+
+        print(f"\n--- Chunk {index} ---")
+        print(f"Source: {source_name}")
+        print("Content:")
+        print(doc.page_content)
+
+
+#--------------------------------------
+#Helper to delete the duplicate chunks
+#--------------------------------------
+
+def remove_duplicate_docs(retrieved_docs):
+    unique_docs=[]
+    seen_content=set()
+
+    for doc in retrieved_docs:
+        content=doc.page_content.strip()
+
+        if content not in seen_content:
+            unique_docs.append(doc)
+            seen_content.add(content)
+    
+    return unique_docs
+
 
 # -----------------------------
 # 8. Ask questions
@@ -142,6 +176,13 @@ while True:
         break
 
     retrieved_docs = retriever.invoke(question)
+
+    retrieved_docs=remove_duplicate_docs(retrieved_docs)
+
+    
+    print_retrieved_docs(retrieved_docs)
+
+
 
     context = format_context(retrieved_docs)
 
