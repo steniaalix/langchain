@@ -12,6 +12,9 @@ from langchain_chroma import Chroma
 
 load_dotenv()
 
+DEBUG=True
+TOP_K=2
+RELEVANCE_THRESHOLD=1.2
 
 # -----------------------------
 # 1. Set paths
@@ -40,11 +43,6 @@ vector_store = Chroma(
 )
 
 
-retriever = vector_store.as_retriever(
-    search_kwargs={
-        "k": 2
-    }
-)
 
 
 # -----------------------------
@@ -92,6 +90,19 @@ Answer:
 
 rag_chain = rag_prompt | llm | StrOutputParser()
 
+#----------------------------------------
+#Helper to get the page_label
+#----------------------------------------
+
+def get_source_label(doc):
+    source_path=doc.metadata.get("source","unknown source")
+    source_name=Path(source_path).name
+
+    page_label= doc.metadata.get("page_label")
+    if page_label :
+        return f"{source_name}, page {page_label}"
+    
+    return source_name
 
 # -----------------------------
 # 6. Helper function for formatting context
@@ -101,13 +112,10 @@ def format_context(retrieved_docs):
     context_parts = []
 
     for doc in retrieved_docs:
-        source_path = doc.metadata.get("source", "unknown source")
-        source_name = Path(source_path).name
-
+        source_label=get_source_label(doc)
         context_parts.append(
-            f"Source: {source_name}\nContent:\n{doc.page_content}"
+            f"Source: {source_label}\nContent:\n{doc.page_content} "
         )
-
     return "\n\n---\n\n".join(context_parts)
 
 
@@ -119,11 +127,10 @@ def print_sources(retrieved_docs):
     unique_sources = []
 
     for doc in retrieved_docs:
-        source_path = doc.metadata.get("source", "unknown source")
-        source_name = Path(source_path).name
+        source_label= get_source_label(doc)
 
-        if source_name not in unique_sources:
-            unique_sources.append(source_name)
+        if source_label not in unique_sources:
+            unique_sources.append(source_label)
 
     print("\nSources used:")
     for index, source in enumerate(unique_sources, start=1):
@@ -163,7 +170,35 @@ def remove_duplicate_docs(retrieved_docs):
     
     return unique_docs
 
+#---------------------------------
+#Helper to filter relevant chunks
+#---------------------------------
 
+def filter_relevant_results(results_with_scores):
+    relevant_docs=[]
+
+    for doc, score in results_with_scores:
+        if score <= RELEVANCE_THRESHOLD:
+            relevant_docs.append(doc)
+
+    return relevant_docs
+ 
+ #------------------------------
+ #Helper to print docs with scores
+ #------------------------------
+
+def print_results_with_scores(results_with_scores):
+    print("\nRetrieved chunks with scores:")
+    for index , (doc, score) in enumerate(results_with_scores,start=1):
+        source_path= doc.metadata.get("source","unknown source")
+        source_name= Path(source_path).name
+
+        print(f"\n--- Chunk {index} ---")
+        print(f"Source: {source_name}")
+        print(f"Score: {score}")
+        print("Content:")
+        print(doc.page_content)
+ 
 # -----------------------------
 # 8. Ask questions
 # -----------------------------
@@ -175,23 +210,37 @@ while True:
         print("Bye!")
         break
 
-    retrieved_docs = retriever.invoke(question)
+    if not question:
+        print("Question cannot be empty.")
+        continue
 
+    results_with_scores=vector_store.similarity_search_with_score(
+        question,
+        k=TOP_K
+    )
+    retrieved_docs= filter_relevant_results(results_with_scores)
     retrieved_docs=remove_duplicate_docs(retrieved_docs)
 
+    if DEBUG:
+        print_results_with_scores(results_with_scores)
+
+    if not retrieved_docs:
+        print("\nAI Answer:")
+        print("I could not find that in the notes.")
+        continue
     
-    print_retrieved_docs(retrieved_docs)
+    if DEBUG:
+        print_retrieved_docs(retrieved_docs)
 
 
 
     context = format_context(retrieved_docs)
-
-    answer = rag_chain.invoke({
-        "context": context,
-        "question": question
-    })
-
     print("\nAI Answer:")
-    print(answer)
+
+    for chunk in rag_chain.stream({
+        "context": context,
+        "question": question}):
+        print(chunk,end="",flush=True)
+    
 
     print_sources(retrieved_docs)
